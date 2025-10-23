@@ -11,6 +11,8 @@
 #include "larpandoracontent/LArHelpers/LArClusterHelper.h"
 #include "larpandoracontent/LArHelpers/LArGeometryHelper.h"
 
+#include "larpandoracontent/LArObjects/LArCaloHit.h"
+
 #include "larpandoracontent/LArVertex/CandidateVertexCreationAlgorithm.h"
 
 #include <utility>
@@ -26,7 +28,7 @@ CandidateVertexCreationAlgorithm::CandidateVertexCreationAlgorithm() :
     m_minClusterCaloHits(5),
     m_minClusterLengthSquared(3.f * 3.f),
     m_chiSquaredCut(2.f),
-    m_enableEndpointCandidates(true),
+    m_enableEndpointCandidates(true), /////< temp!!!
     m_maxEndpointXDiscrepancy(4.f),
     m_enableCrossingCandidates(false),
     m_nMaxCrossingCandidates(500),
@@ -37,7 +39,11 @@ CandidateVertexCreationAlgorithm::CandidateVertexCreationAlgorithm() :
     m_minNearbyCrossingDistanceSquared(0.5f * 0.5f),
     m_reducedCandidates(false),
     m_selectionCutFactorMax(2.f),
-    m_nClustersPassingMaxCutsPar(26.f)
+    m_nClustersPassingMaxCutsPar(26.f),
+    m_enableSemanticTransitionCandidates(true),
+    m_reducedCandidatesBySemanticLabels(false),
+    m_maxHitSearchRadius(5),
+    m_maxSemanticLabelRatio(0.95)
 {
 }
 
@@ -72,14 +78,33 @@ StatusCode CandidateVertexCreationAlgorithm::Run()
             this->CreateEndpointCandidates(clusterVectorV, clusterVectorW);
         }
 
+        if (m_enableSemanticTransitionCandidates)
+        {
+            this->CreateSemanticTransitionVertices(clusterVectorU, clusterVectorV);
+            this->CreateSemanticTransitionVertices(clusterVectorU, clusterVectorW);
+            this->CreateSemanticTransitionVertices(clusterVectorV, clusterVectorW);
+        }
+
         if (m_enableCrossingCandidates)
             this->CreateCrossingCandidates(clusterVectorU, clusterVectorV, clusterVectorW);
 
         if (!m_inputVertexListName.empty())
             this->AddInputVertices();
 
+        std::cout << "CandidateVertexCreationAlgorithm"
+                << ": Created " << pVertexList->size() << " candidate vertices" << std::endl;
+
         if (!pVertexList->empty())
         {
+
+            for (const Vertex *const pVertex : *pVertexList)
+            {
+                std::cout << "CandidateVertexCreationAlgorithm: Candidate vertex at position: "
+                        << pVertex->GetPosition().GetX() << "\t"
+                        << pVertex->GetPosition().GetY() << "\t"
+                        << pVertex->GetPosition().GetZ() << std::endl;
+            }
+    
             PANDORA_RETURN_RESULT_IF(STATUS_CODE_SUCCESS, !=, PandoraContentApi::SaveList<Vertex>(*this, m_outputVertexListName));
 
             if (m_replaceCurrentVertexList)
@@ -182,6 +207,103 @@ void CandidateVertexCreationAlgorithm::SelectClusters(ClusterVector &clusterVect
 
 //------------------------------------------------------------------------------------------------------------------------------------------
 
+void CandidateVertexCreationAlgorithm::CreateSemanticTransitionVertices(
+    const ClusterVector &clusterVector1, const ClusterVector &clusterVector2) const
+{
+    std::vector<pandora::CartesianVector> transitionPoints1, transitionPoints2;
+
+    for (const Cluster *const pCluster : clusterVector1)
+        this->CreateSemanticTransitionCandidates(pCluster, transitionPoints1);
+    for (const Cluster *const pCluster : clusterVector2)
+        this->CreateSemanticTransitionCandidates(pCluster, transitionPoints2);
+
+    for (const pandora::CartesianVector &position1 : transitionPoints1)
+    {
+
+        for (const pandora::CartesianVector &position2 : transitionPoints2)
+        {
+
+            if (fabs(position1.GetX() - position2.GetX()) > m_maxEndpointXDiscrepancy)
+                continue;
+
+            CartesianVector position3D(0.f, 0.f, 0.f);;
+            float chiSquared;
+            LArGeometryHelper::MergeTwoPositions3D(
+                this->GetPandora(), 
+                LArClusterHelper::GetClusterHitType(clusterVector1.front()),
+                LArClusterHelper::GetClusterHitType(clusterVector2.front()),
+                position1, position2, position3D, chiSquared);
+
+            if (chiSquared > m_chiSquaredCut)
+                continue;
+
+            PandoraContentApi::Vertex::Parameters parameters;
+            parameters.m_position = position3D;
+            parameters.m_vertexLabel = VERTEX_INTERACTION;
+            parameters.m_vertexType = VERTEX_3D;
+
+            const Vertex *pVertex = nullptr;
+            PANDORA_THROW_RESULT_IF(STATUS_CODE_SUCCESS, !=,
+                PandoraContentApi::Vertex::Create(*this, parameters, pVertex));
+        }
+    }
+}
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+void CandidateVertexCreationAlgorithm::CreateSemanticTransitionCandidates(
+    const pandora::Cluster *const pCluster, std::vector<pandora::CartesianVector> &transitionPoints) const
+{
+    const OrderedCaloHitList &hitList = pCluster->GetOrderedCaloHitList();
+    std::vector<std::pair<CartesianVector, std::string>> hitLabels;
+
+    for (auto iter = hitList.begin(), iterEnd = hitList.end(); iter != iterEnd; ++iter)
+    {
+        CaloHitVector hits(iter->second->begin(), iter->second->end());
+        for (const CaloHit *const pCaloHit : hits)
+        {
+            const auto *pLArHit = static_cast<const lar_content::LArCaloHit *>(pCaloHit);
+            const auto &allScores = pLArHit->GetHitScores();
+            const auto &allLabels = pLArHit->GetHitScoreLabels();
+
+            if (allScores.empty() || allLabels.empty())
+                continue;
+
+            std::vector scores(allScores.begin() + 1, allScores.end());
+            std::vector labels(allLabels.begin() + 1, allLabels.end());
+
+            // auto sortedScores = scores;
+            // std::sort(sortedScores.begin(), sortedScores.end(), std::greater<float>());
+            // const float confidence = sortedScores[0] / sortedScores[1];
+            // if (confidence < 1.5f)
+            //     continue;
+
+            const size_t bestIdx = std::distance(scores.begin(), std::max_element(scores.begin(), scores.end()));
+            hitLabels.emplace_back(pLArHit->GetPositionVector(), labels[bestIdx]);
+        }
+    }
+
+    std::sort(hitLabels.begin(), hitLabels.end(),
+              [](const auto &a, const auto &b) { return a.first.GetX() < b.first.GetX(); });
+
+    std::cout << "Comparing hit labels for this cluster..." << std::endl;
+    for (size_t i = 1; i < hitLabels.size(); ++i)
+    {
+        const std::string &prevLabel = hitLabels[i-1].second;
+        const std::string &currLabel = hitLabels[i].second;
+
+        std::cout << "Previous and current label along X: " << prevLabel << " and " << currLabel << std::endl;
+
+        if (prevLabel != currLabel)
+        {
+            transitionPoints.push_back(hitLabels[i-1].first);
+            transitionPoints.push_back(hitLabels[i].first);
+        }
+    }
+}
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
 void CandidateVertexCreationAlgorithm::CreateEndpointCandidates(const ClusterVector &clusterVector1, const ClusterVector &clusterVector2) const
 {
     for (const Cluster *const pCluster1 : clusterVector1)
@@ -200,12 +322,151 @@ void CandidateVertexCreationAlgorithm::CreateEndpointCandidates(const ClusterVec
             const CartesianVector minLayerPosition2(fitResult2.GetGlobalMinLayerPosition());
             const CartesianVector maxLayerPosition2(fitResult2.GetGlobalMaxLayerPosition());
 
-            this->CreateEndpointVertex(maxLayerPosition1, hitType1, fitResult2);
-            this->CreateEndpointVertex(minLayerPosition1, hitType1, fitResult2);
-            this->CreateEndpointVertex(maxLayerPosition2, hitType2, fitResult1);
-            this->CreateEndpointVertex(minLayerPosition2, hitType2, fitResult1);
+            if (m_reducedCandidatesBySemanticLabels) {
+                if(!this->IsClusterSingleSemanticLabel(clusterVector1)) {
+                    if (!this->IsSurroundedBySameSemanticLabel(maxLayerPosition1, clusterVector1))
+                        this->CreateEndpointVertex(maxLayerPosition1, hitType1, fitResult2);
+                    if (!this->IsSurroundedBySameSemanticLabel(minLayerPosition1, clusterVector1))
+                        this->CreateEndpointVertex(minLayerPosition1, hitType1, fitResult2);
+                }
+                if(!this->IsClusterSingleSemanticLabel(clusterVector2)) {
+                    if (!this->IsSurroundedBySameSemanticLabel(maxLayerPosition2, clusterVector2))
+                        this->CreateEndpointVertex(maxLayerPosition2, hitType2, fitResult1);
+                    if (!this->IsSurroundedBySameSemanticLabel(minLayerPosition2, clusterVector2))
+                        this->CreateEndpointVertex(minLayerPosition2, hitType2, fitResult1);
+                }
+            }
+            else {
+                this->CreateEndpointVertex(maxLayerPosition1, hitType1, fitResult2);
+                this->CreateEndpointVertex(minLayerPosition1, hitType1, fitResult2);
+                this->CreateEndpointVertex(maxLayerPosition2, hitType2, fitResult1);
+                this->CreateEndpointVertex(minLayerPosition2, hitType2, fitResult1);
+            }
         }
     }
+}
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+bool CandidateVertexCreationAlgorithm::IsClusterSingleSemanticLabel(const pandora::ClusterVector &clusterVector) const
+{
+    std::map<std::string, unsigned int> labelCounts;
+    unsigned int totalConsidered = 0;
+
+    for (const Cluster *const pCluster : clusterVector)
+    {
+        const OrderedCaloHitList &hitList(pCluster->GetOrderedCaloHitList());
+        for (auto iter = hitList.begin(), iterEnd = hitList.end(); iter != iterEnd; ++iter)
+        {
+            CaloHitVector hits(iter->second->begin(), iter->second->end());
+            for (const CaloHit *const pCaloHit : hits)
+            {
+                const lar_content::LArCaloHit *pLArCaloHit = static_cast<const lar_content::LArCaloHit *>(pCaloHit);
+
+                const auto &allScores = pLArCaloHit->GetHitScores();
+                const auto &allLabels = pLArCaloHit->GetHitScoreLabels();
+                if (allScores.empty() || allLabels.empty())
+                    continue;
+
+                const auto scores = std::vector(allScores.begin() + 1, allScores.end());
+                const auto labels = std::vector(allLabels.begin() + 1, allLabels.end());
+
+                auto sortedScores = scores;
+                std::sort(sortedScores.begin(), sortedScores.end(), std::greater<float>());
+                const float confidence = sortedScores[0] / sortedScores[1];
+                if (confidence < 2.0f)
+                    continue;
+
+                const auto bestLabelIdx = std::distance(scores.begin(), std::max_element(scores.begin(), scores.end()));
+                const std::string &semanticLabel = labels[bestLabelIdx];
+
+                ++labelCounts[semanticLabel];
+                ++totalConsidered;
+            }
+        }
+    }
+
+    if (totalConsidered == 0)
+        return false;
+
+    const unsigned int maxCount = std::max_element(
+        labelCounts.begin(), labelCounts.end(),
+        [](const auto &a, const auto &b){ return a.second < b.second; })->second;
+
+    const float fraction = static_cast<float>(maxCount) / static_cast<float>(totalConsidered);
+    return (fraction >= 0.95); 
+}
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+bool CandidateVertexCreationAlgorithm::IsSurroundedBySameSemanticLabel(const pandora::CartesianVector &position, const pandora::ClusterVector &clusterVector) const
+{
+    std::map<std::string, unsigned int> labelCounts;
+    unsigned int totalConsidered = 0;
+
+    for (const Cluster *const pCluster : clusterVector)
+    {
+        const OrderedCaloHitList &hitList(pCluster->GetOrderedCaloHitList());
+        for (OrderedCaloHitList::const_iterator iter = hitList.begin(), iterEnd = hitList.end(); iter != iterEnd; ++iter)
+        {
+            CaloHitVector hits(iter->second->begin(), iter->second->end());
+            for (const CaloHit *const pCaloHit : hits)
+            {
+                const lar_content::LArCaloHit *pLArCaloHit = static_cast<const lar_content::LArCaloHit *>(pCaloHit);
+
+                const pandora::CartesianVector &hitPos = pLArCaloHit->GetPositionVector();
+                if ((hitPos - position).GetMagnitudeSquared() > m_maxHitSearchRadius * m_maxHitSearchRadius)
+                    continue;
+
+                // Just don't do anything if you don't find the scores...
+                const auto &allScores = pLArCaloHit->GetHitScores();
+                const auto &allLabels = pLArCaloHit->GetHitScoreLabels();
+                if (allScores.empty() || allLabels.empty())
+                    continue;
+
+                // Skip the filter
+                const auto scores = std::vector(allScores.begin() + 1, allScores.end());
+                const auto labels = std::vector(allLabels.begin() + 1, allLabels.end());
+
+                // Skip hits with low confidence
+                auto sortedScores = scores;
+                std::sort(sortedScores.begin(), sortedScores.end(), std::greater<float>());
+                const float confidence = sortedScores[0] / sortedScores[1];
+                if (confidence < 2.0f)
+                    continue;
+
+                // Look at the best hit semantic category
+                const auto bestLabelIdx = std::distance(scores.begin(), std::max_element(scores.begin(), scores.end()));
+                const std::string &semanticLabel = labels[bestLabelIdx];
+
+
+                // Count the hits and their semantic categories
+                totalConsidered += 1;
+                labelCounts[semanticLabel] += 1;
+            }
+        }        
+    }
+
+    // If there weren't semantic categories at all, just don't do anything
+    if (totalConsidered == 0)
+        return false;    
+
+    // What is the fraction of the best semantic category in the surrounding of the candidate?
+    const unsigned int maxCount = std::max_element(
+        labelCounts.begin(), labelCounts.end(),
+        [](const auto &a, const auto &b) { return a.second < b.second; })->second;
+    const float fraction = static_cast<float>(maxCount) / static_cast<float>(totalConsidered);
+
+    // std::cout << "Position of candidate vertex: " << position.GetX() << "\t" << position.GetY() << "\t" << position.GetZ() << std::endl;
+    // std::cout << "Total number of hits considered: " << totalConsidered << std::endl;
+    // std::cout << "Total number of hits for hip: " << labelCounts["hip"] << std::endl;
+    // std::cout << "Total number of hits for mip: " << labelCounts["mip"] << std::endl;
+    // std::cout << "Total number of hits for showers: " << labelCounts["shower"] << std::endl;
+    // std::cout << "Total number of hits for michel: " << labelCounts["michel"] << std::endl;
+    // std::cout << "Total number of hits for diffuse: " << labelCounts["diffuse"] << std::endl;        
+    // std::cout << "Fraction of IsSurroundedBySameSemanticLabel for this candidate vertex: " << fraction << std::endl;
+
+    return (fraction >= m_maxSemanticLabelRatio); 
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------
@@ -506,6 +767,9 @@ StatusCode CandidateVertexCreationAlgorithm::ReadSettings(const TiXmlHandle xmlH
 
     PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=,
         XmlHelper::ReadValue(xmlHandle, "NClustersPassingMaxCutsPar", m_nClustersPassingMaxCutsPar));
+
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=,
+        XmlHelper::ReadValue(xmlHandle, "ReducedCandidatesBySemanticLabels", m_reducedCandidatesBySemanticLabels));
 
     float maxCrossingSeparation = std::sqrt(m_maxCrossingSeparationSquared);
     PANDORA_RETURN_RESULT_IF_AND_IF(

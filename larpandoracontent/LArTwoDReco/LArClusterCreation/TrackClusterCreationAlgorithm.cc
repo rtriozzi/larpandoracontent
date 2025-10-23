@@ -7,6 +7,7 @@
  */
 
 #include "Pandora/AlgorithmHeaders.h"
+#include "larpandoracontent/LArObjects/LArCaloHit.h"
 
 #include "larpandoracontent/LArHelpers/LArClusterHelper.h"
 #include "larpandoracontent/LArHelpers/LArGeometryHelper.h"
@@ -62,10 +63,22 @@ StatusCode TrackClusterCreationAlgorithm::FilterCaloHits(
 {
     CaloHitList availableHitList;
 
+    // std::cout << "what am I doing in life -- dumping hits in a random algo" << std::endl;
+
     for (const CaloHit *const pCaloHit : *pCaloHitList)
     {
         if (PandoraContentApi::IsAvailable(*this, pCaloHit) && pCaloHit->GetMipEquivalentEnergy() >= m_minMipFraction)
             availableHitList.push_back(pCaloHit);
+        
+        const lar_content::LArCaloHit *pLArCaloHit = static_cast<const lar_content::LArCaloHit*>(pCaloHit);
+        std::vector<float> scores = pLArCaloHit->GetHitScores();
+        std::vector<std::string> scoreLabels = pLArCaloHit->GetHitScoreLabels();
+        // std::cout << pLArCaloHit->GetTime() << "\t" << pLArCaloHit->GetTrackProbability() << "\t" << pLArCaloHit->GetShowerProbability() << std::endl;
+        // if (!scores.empty() && !scoreLabels.empty())
+        //     std::cout << pLArCaloHit->GetTime() << "\t" << scoreLabels[0] << "\t" << scores[0] 
+        //                                         << "\t" << scoreLabels[1] << "\t" << scores[1] 
+        //                                         << "\t" << scoreLabels[2] << "\t" << scores[2] << std::endl;
+
     }
 
     if (availableHitList.empty())
