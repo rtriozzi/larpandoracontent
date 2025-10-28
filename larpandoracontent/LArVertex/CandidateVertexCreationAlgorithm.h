@@ -57,24 +57,6 @@ private:
      */
     void CreateEndpointVertex(const pandora::CartesianVector &position1, const pandora::HitType hitType1, const TwoDSlidingFitResult &fitResult2) const;
 
-    void CreateSemanticTransitionCandidates(const pandora::Cluster *const pCluster, std::vector<pandora::CartesianVector> &transitionPoints) const;
-    void CreateSemanticTransitionVertices(const pandora::ClusterVector &clusterVector1, const pandora::ClusterVector &clusterVector2) const;
-
-    /**
-     *  @brief  TODO
-     *
-     *  @param  clusterVector the vector of clusters from which vertex candidates are extracted
-     */ 
-    bool IsClusterSingleSemanticLabel(const pandora::ClusterVector &clusterVector) const;
-
-    /**
-     *  @brief  Filter the candidate vertex if the region surrounding it has mostly one semantic category
-     *
-     *  @param  position a candidate vertex position
-     *  @param  clusterVector the vector of clusters from which vertex candidates are extracted
-     */
-    bool IsSurroundedBySameSemanticLabel(const pandora::CartesianVector &position, const pandora::ClusterVector &clusterVector) const;
-
     /**
      *  @brief  Extrapolate 2D clusters, find where they cross, and match crossing points between views to create vertex candidates
      *
@@ -177,11 +159,6 @@ private:
     bool m_reducedCandidates;           ///< Whether to reduce the number of candidates
     float m_selectionCutFactorMax;      ///< Maximum factor to multiply the base cluster selection cuts
     float m_nClustersPassingMaxCutsPar; ///< Parameter for number of clusters passing the max base cluster selection cuts
-
-    bool m_enableSemanticTransitionCandidates;  ///< Option to enable candidate vertices at semantic label transitions
-    bool m_reducedCandidatesBySemanticLabels;   ///< Option to skip candidates in homogeneous semantic regions
-    float m_maxHitSearchRadius;                 ///< Maximum radius to look for hits around candidates
-    float m_maxSemanticLabelRatio;              ///< Maximum allowed fraction of hit semantic labels to consider a ragion "homogeneous"
 };
 
 } // namespace lar_content
