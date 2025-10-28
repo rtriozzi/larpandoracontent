@@ -74,12 +74,27 @@ private:
     const pandora::Vertex *CompareVertices(const pandora::VertexVector &vertexVector, const VertexFeatureInfoMap &vertexFeatureInfoMap,
         const LArMvaHelper::MvaFeatureVector &eventFeatureList, const KDTreeMap &kdTreeMap, const T &t, const bool useRPhi) const;
 
+    /**
+     *  @brief  Compute a semantic penalty factor for a given vertex position
+     *
+     *  @param  vertexPos the position of the vertex to check
+     *  @param  kdTreeMap the map of 2D hit kd trees
+     *
+     *  @return penalty factor to apply to MVA score
+     */
+    float ComputeSemanticPenalty(const pandora::CartesianVector &vertexPos, const KDTreeMap &kdTreeMap) const;
+
     std::string m_filePathEnvironmentVariable; ///< The environment variable providing a list of paths to mva files
     std::string m_mvaFileName;                 ///< The mva file name
     std::string m_regionMvaName;               ///< The name of the region mva to find
     std::string m_vertexMvaName;               ///< The name of the vertex mva to find
     T m_mvaRegion;                             ///< The region mva
     T m_mvaVertex;                             ///< The vertex mva
+
+    bool m_useSemanticPenalty;                 ///< Whether to apply a penalty based on semantic label homogeneity
+    float m_maxSemanticLabelRatio;             ///< Fraction threshold for homogeneity 
+    float m_semanticPenaltyFactor;             ///< Fixed penalty factor
+    float m_maxHitSearchRadius;                ///< Search radius for hits around vertex [cm]
 };
 
 typedef MvaVertexSelectionAlgorithm<AdaBoostDecisionTree> BdtVertexSelectionAlgorithm;

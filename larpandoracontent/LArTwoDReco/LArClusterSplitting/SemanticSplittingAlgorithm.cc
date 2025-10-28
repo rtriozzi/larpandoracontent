@@ -21,127 +21,88 @@ SemanticSplittingAlgorithm::SemanticSplittingAlgorithm() :
 
 //------------------------------------------------------------------------------------------------------------------------------------------
 
-StatusCode SemanticSplittingAlgorithm::DivideCaloHits(const pandora::Cluster *const pCluster, pandora::CaloHitList &firstHitList, pandora::CaloHitList &secondHitList) const
+pandora::StatusCode SemanticSplittingAlgorithm::FindBestSplitPosition(
+    const TwoDSlidingFitResult &slidingFitResult, pandora::CartesianVector &splitPosition) const
 {
-    float splitPositionX(0.f);
-    firstHitList.clear();
-    secondHitList.clear();
+    const Cluster *const pCluster(slidingFitResult.GetCluster());
+    const OrderedCaloHitList &orderedCaloHitList(pCluster->GetOrderedCaloHitList());
 
-    if (STATUS_CODE_SUCCESS == this->FindBestSplitPosition(pCluster, splitPositionX)) {
-        StatusCode status = this->DivideCaloHits(pCluster, splitPositionX, firstHitList, secondHitList);
-        std::cout << "Semantic split applied at x = " << splitPositionX 
-                  << " | hits: " << firstHitList.size() << " + " << secondHitList.size() << std::endl;
-        return status;
-    }
-
-    return STATUS_CODE_NOT_FOUND;
-}
-
-//------------------------------------------------------------------------------------------------------------------------------------------
-
-StatusCode SemanticSplittingAlgorithm::FindBestSplitPosition(
-    const pandora::Cluster *const pCluster, float &splitPositionX) const
-{
-
-    std::vector<std::tuple<CartesianVector, std::string, float>> hitInfo; ///< store position, label, confidence
-    const OrderedCaloHitList &orderedCaloHitList = pCluster->GetOrderedCaloHitList();
+    struct HitInfo {
+        pandora::CartesianVector position;  ///< hit position
+        std::string label;                  ///< assigned semantic label
+        float confidence;                   ///< confidence in the assigned label
+        float rL;                           ///< longitudinal position along the sliding fit direction
+    };
+    std::vector<HitInfo> hits;
 
     for (auto iter = orderedCaloHitList.begin(), iterEnd = orderedCaloHitList.end(); iter != iterEnd; ++iter)
     {
-        CaloHitVector hits(iter->second->begin(), iter->second->end());
-        for (const CaloHit *const pCaloHit : hits)
+        for (const CaloHit *pCaloHit : *(iter->second))
         {
-            const auto *pLArHit = static_cast<const lar_content::LArCaloHit *>(pCaloHit);
-            const auto &allScores = pLArHit->GetHitScores();
-            const auto &allLabels = pLArHit->GetHitScoreLabels();
+            const auto *pLArCaloHit = static_cast<const lar_content::LArCaloHit *>(pCaloHit);
+            const auto &allScores = pLArCaloHit->GetHitScores();
+            const auto &allLabels = pLArCaloHit->GetHitScoreLabels();
 
             if (allScores.empty() || allLabels.empty())
                 continue;
 
-            std::vector scores(allScores.begin() + 1, allScores.end());
-            std::vector labels(allLabels.begin() + 1, allLabels.end());
+            std::vector<float> scores(allScores.begin() + 1, allScores.end());
+            std::vector<std::string> labels(allLabels.begin() + 1, allLabels.end());
 
-            auto sortedScores = scores;
+            // Skip hits with low confidence in their best predicted label
+            std::vector<float> sortedScores = scores;
             std::sort(sortedScores.begin(), sortedScores.end(), std::greater<float>());
             const float confidence = sortedScores[0] / sortedScores[1];
-            // if (confidence < 1.5f)
-            //     continue;
+            if (confidence < 1.5f)
+                continue;
 
+            // Get the best label for this hit
             const size_t bestIdx = std::distance(scores.begin(), std::max_element(scores.begin(), scores.end()));
 
-            hitInfo.emplace_back(pLArHit->GetPositionVector(), labels[bestIdx], confidence);
+            // Project onto sliding fit direction
+            float rL(0.f), rT(0.f);
+            slidingFitResult.GetLocalPosition(pCaloHit->GetPositionVector(), rL, rT);
+
+            hits.push_back({pCaloHit->GetPositionVector(), labels[bestIdx], confidence, rL});
         }
     }
 
-    if (hitInfo.size() < 2)
-        return STATUS_CODE_NOT_FOUND;    
+    if (hits.size() < 2)
+        return STATUS_CODE_NOT_FOUND;
 
-    std::sort(hitInfo.begin(), hitInfo.end(),
-              [](const auto &a, const auto &b) { return std::get<0>(a).GetX() < std::get<0>(b).GetX(); });
+    std::sort(hits.begin(), hits.end(), 
+        [](const HitInfo &a, const HitInfo &b) { return a.rL < b.rL; });
+    std::vector<float> transitionConfidence;
+    std::vector<size_t> transitionIndices;
 
-    std::vector<float> transitionPoints;
-    std::vector<float> transitionScores;
-
-    for (size_t i = 1; i < hitInfo.size(); ++i)
+    for (size_t i = 1; i < hits.size(); ++i)
     {
-        const std::string &prevLabel = std::get<1>(hitInfo[i - 1]);
-        const std::string &currLabel = std::get<1>(hitInfo[i]);
+        const std::string &prevLabel = hits[i - 1].label;
+        const std::string &currLabel = hits[i].label;
+
+        // Skip diffuse and Michel hits, if requested
         if ((m_ignoreMichel && (prevLabel == "michel" || currLabel == "michel")) ||
             (m_ignoreDiffuse && (prevLabel == "diffuse" || currLabel == "diffuse")))
             continue;
 
+        // Store transition points between different labels
         if (prevLabel != currLabel)
         {
-            const float splitX = 0.5f * (std::get<0>(hitInfo[i - 1]).GetX() + std::get<0>(hitInfo[i]).GetX());
-            transitionPoints.push_back(splitX);
-
-            const float avgConf = 0.5f * (std::get<2>(hitInfo[i - 1]) + std::get<2>(hitInfo[i]));
-            transitionScores.push_back(avgConf);
-
-            std::cout << "Transition between labels " << prevLabel << " and " << currLabel
-                        << " at x = " << splitX << " with average confidence " << avgConf << std::endl;
+            transitionConfidence.push_back(0.5f * (hits[i - 1].confidence + hits[i].confidence));
+            transitionIndices.push_back(i);
         }
     }
 
-    std::cout << "Found " << transitionPoints.size() << " candidate splitting points." << std::endl;
-
-    if (transitionPoints.empty())
+    if (transitionConfidence.empty())
         return STATUS_CODE_NOT_FOUND;
 
+    // Split at the transition with the highest average confidence
     const size_t bestIdx = std::distance(
-        transitionScores.begin(), std::max_element(transitionScores.begin(), transitionScores.end()));
-
-    splitPositionX = transitionPoints[bestIdx];
-
-    return STATUS_CODE_SUCCESS;
-
-}
-
-//------------------------------------------------------------------------------------------------------------------------------------------
-
-StatusCode SemanticSplittingAlgorithm::DivideCaloHits(const pandora::Cluster *const pCluster, const float &splitPositionX, pandora::CaloHitList &firstHitList, pandora::CaloHitList &secondHitList) const
-{
-    const OrderedCaloHitList &orderedCaloHitList = pCluster->GetOrderedCaloHitList();
-
-    for (auto iter = orderedCaloHitList.begin(), iterEnd = orderedCaloHitList.end(); iter != iterEnd; ++iter)
-    {
-        CaloHitVector hits(iter->second->begin(), iter->second->end());
-        for (const CaloHit *const pCaloHit : hits)
-        {
-            if (pCaloHit->GetPositionVector().GetX() < splitPositionX)
-                firstHitList.push_back(pCaloHit);
-            else
-                secondHitList.push_back(pCaloHit);
-        }
-    }
-
-    std::cout << "Cluster split into two lists with #hits: " << firstHitList.size() << " and " << secondHitList.size() << std::endl;
-    
-    if (firstHitList.empty() || secondHitList.empty())
-        return STATUS_CODE_NOT_FOUND;
-    
-    if (firstHitList.size() < 3 || secondHitList.size() < 3)
-        return STATUS_CODE_NOT_FOUND;
+        transitionConfidence.begin(), std::max_element(transitionConfidence.begin(), transitionConfidence.end()));
+    splitPosition = 
+        (hits[transitionIndices[bestIdx] - 1].position 
+        + hits[transitionIndices[bestIdx]].position)
+        * 0.5f;
 
     return STATUS_CODE_SUCCESS;
 }

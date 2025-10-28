@@ -7,39 +7,33 @@
 #ifndef LAR_SEMANTIC_SPLITTING_ALGORITHM_H
 #define LAR_SEMANTIC_SPLITTING_ALGORITHM_H 1
 
-#include "larpandoracontent/LArTwoDReco/LArClusterSplitting/ClusterSplittingAlgorithm.h"
+#include "larpandoracontent/LArTwoDReco/LArClusterSplitting/TwoDSlidingFitSplittingAlgorithm.h"
 
 namespace lar_content
 {
 
-class SemanticSplittingAlgorithm : public ClusterSplittingAlgorithm
+class SemanticSplittingAlgorithm : public TwoDSlidingFitSplittingAlgorithm
 {
 public:
     SemanticSplittingAlgorithm();
 
 private:
-    pandora::StatusCode ReadSettings(const pandora::TiXmlHandle xmlHandle);
-    pandora::StatusCode DivideCaloHits(
-        const pandora::Cluster *const pCluster, pandora::CaloHitList &firstCaloHitList, pandora::CaloHitList &secondCaloHitList) const;
-
+    pandora::StatusCode ReadSettings(const pandora::TiXmlHandle xmlHandle) override;
+    
     /**
-     *  @brief Find the transition point for splitting the cluster based on hit semantic labels
+     *  @brief  Use sliding linear fit to identify the best split position
      *
-     *  @param pCluster the input cluster
-     *  @param splitPosition the best layer
+     *  @param  slidingFitResult the input sliding fit result
+     *  @param  splitPosition the best split position based on semantic labels
+     *
+     *  @return pandora::StatusCode
      */
-    pandora::StatusCode FindBestSplitPosition(const pandora::Cluster *const pCluster, pandora::CartesianVector &splitPosition) const;
-    pandora::StatusCode DivideCaloHits(const pandora::Cluster *const pCluster,
-                                       const float &splitPosition,
-                                       pandora::CaloHitList &firstHitList,
-                                       pandora::CaloHitList &secondHitList) const;
+    pandora::StatusCode FindBestSplitPosition(
+        const TwoDSlidingFitResult &slidingFitResult,
+        pandora::CartesianVector &splitPosition) const;
 
-    // pandora::StatusCode DivideCaloHits(const pandora::Cluster *const pCluster,
-    //                                    pandora::CaloHitList &firstHitList,
-    //                                    pandora::CaloHitList &secondHitList) const override;
-
-    bool m_ignoreMichel;    ///< Whether to ignore transitions involving Michel labels
-    bool m_ignoreDiffuse;   ///< Whether to ignore transitions involving Diffuse labels
+    bool m_ignoreMichel;    ///< Whether to ignore transitions involving "michel" hits
+    bool m_ignoreDiffuse;   ///< Whether to ignore transitions involving "diffuse" hits
 };
 
 } // namespace lar_content

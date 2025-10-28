@@ -15,6 +15,8 @@
 #include "larpandoracontent/LArHelpers/LArMCParticleHelper.h"
 #include "larpandoracontent/LArHelpers/LArMvaHelper.h"
 
+#include "larpandoracontent/LArObjects/LArCaloHit.h"
+
 #include "larpandoracontent/LArVertex/EnergyKickFeatureTool.h"
 #include "larpandoracontent/LArVertex/GlobalAsymmetryFeatureTool.h"
 #include "larpandoracontent/LArVertex/LocalAsymmetryFeatureTool.h"
@@ -35,7 +37,11 @@ namespace lar_content
 template <typename T>
 MvaVertexSelectionAlgorithm<T>::MvaVertexSelectionAlgorithm() :
     TrainedVertexSelectionAlgorithm(),
-    m_filePathEnvironmentVariable("FW_SEARCH_PATH")
+    m_filePathEnvironmentVariable("FW_SEARCH_PATH"),
+    m_useSemanticPenalty(true),
+    m_maxSemanticLabelRatio(0.95f),
+    m_semanticPenaltyFactor(0.2f),
+    m_maxHitSearchRadius(4.f)
 {
 }
 
@@ -150,24 +156,125 @@ const pandora::Vertex *MvaVertexSelectionAlgorithm<T>::CompareVertices(const Ver
             VertexSharedFeatureInfo sharedFeatureInfo(separation, axisHits);
             this->AddSharedFeaturesToVector(sharedFeatureInfo, sharedFeatureList);
 
-            if (LArMvaHelper::Classify(t, LArMvaHelper::ConcatenateFeatureLists(eventFeatureList, featureList, chosenFeatureList, sharedFeatureList)))
-            {
-                pBestVertex = pVertex;
-                chosenFeatureList = featureList;
+            if (!m_useSemanticPenalty) {
+                if (LArMvaHelper::Classify(t, LArMvaHelper::ConcatenateFeatureLists(eventFeatureList, featureList, chosenFeatureList, sharedFeatureList)))
+                {
+                    pBestVertex = pVertex;
+                    chosenFeatureList = featureList;
+                }
+            }
+            else {
+                const double score = LArMvaHelper::CalculateClassificationScore(
+                    t, LArMvaHelper::ConcatenateFeatureLists(eventFeatureList, featureList, chosenFeatureList, sharedFeatureList));
+                const double penalizedScore = score - this->ComputeSemanticPenalty(pVertex->GetPosition(), kdTreeMap);
+
+                const double bestScore = LArMvaHelper::CalculateClassificationScore(
+                    t, LArMvaHelper::ConcatenateFeatureLists(eventFeatureList, chosenFeatureList, featureList, sharedFeatureList));
+                const double bestScorePenalized = bestScore - this->ComputeSemanticPenalty(pBestVertex->GetPosition(), kdTreeMap);
+
+                if (penalizedScore > bestScorePenalized)
+                {
+                    pBestVertex = pVertex;
+                    chosenFeatureList = featureList;
+                }
             }
         }
         else
         {
-            if (LArMvaHelper::Classify(t, LArMvaHelper::ConcatenateFeatureLists(eventFeatureList, featureList, chosenFeatureList)))
-            {
-                pBestVertex = pVertex;
-                chosenFeatureList = featureList;
+            if (!m_useSemanticPenalty) {
+                if (LArMvaHelper::Classify(t, LArMvaHelper::ConcatenateFeatureLists(eventFeatureList, featureList, chosenFeatureList)))
+                {
+                    pBestVertex = pVertex;
+                    chosenFeatureList = featureList;
+                }
+            }
+            else {
+                const double score = LArMvaHelper::CalculateClassificationScore(
+                    t, LArMvaHelper::ConcatenateFeatureLists(eventFeatureList, featureList, chosenFeatureList));
+                const double penalizedScore = score - this->ComputeSemanticPenalty(pVertex->GetPosition(), kdTreeMap);
+
+                const double bestScore = LArMvaHelper::CalculateClassificationScore(
+                    t, LArMvaHelper::ConcatenateFeatureLists(eventFeatureList, chosenFeatureList, featureList));
+                const double bestScorePenalized = bestScore - this->ComputeSemanticPenalty(pBestVertex->GetPosition(), kdTreeMap);
+
+                if (penalizedScore > bestScorePenalized)
+                {
+                    pBestVertex = pVertex;
+                    chosenFeatureList = featureList;
+                }                
             }
         }
     }
 
     return pBestVertex;
 }
+
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+template <typename T>
+float MvaVertexSelectionAlgorithm<T>::ComputeSemanticPenalty(const pandora::CartesianVector &vertexPos,
+                                                             const KDTreeMap &kdTreeMap) const
+{
+    float penaltyFactor = 0.f;
+    std::map<std::string, unsigned int> labelCounts;
+    unsigned int totalConsidered = 0;
+
+    for (const auto &[view, kdTree] : kdTreeMap)
+    {   
+        const lar_content::KDTreeBox searchBox =
+            lar_content::build_2d_kd_search_region(vertexPos, m_maxHitSearchRadius, m_maxHitSearchRadius);
+        std::vector<lar_content::KDTreeNodeInfoT<const pandora::CaloHit *, 2>> nearbyHits;
+        kdTree.get().search(searchBox, nearbyHits);
+
+        for (const auto &nodeInfo : nearbyHits)
+        {
+            const pandora::CaloHit *const pCaloHit = nodeInfo.data;
+            const auto *const pLArCaloHit = static_cast<const LArCaloHit *>(pCaloHit);
+
+            const auto &allScores = pLArCaloHit->GetHitScores();
+            const auto &allLabels = pLArCaloHit->GetHitScoreLabels();
+
+            if (allScores.empty() || allLabels.empty())
+                continue;
+
+            const auto scores = std::vector(allScores.begin() + 1, allScores.end());
+            const auto labels = std::vector(allLabels.begin() + 1, allLabels.end());
+
+            // Skip hits with low confidence in their best predicted label
+            std::vector<float> sortedScores = scores;
+            std::sort(sortedScores.begin(), sortedScores.end(), std::greater<float>());
+            const float confidence = sortedScores[0] / (sortedScores[1] + std::numeric_limits<float>::epsilon());
+            if (confidence < 1.5f)
+                continue;
+
+            // Get the best label for this hit
+            const size_t bestIdx = std::distance(scores.begin(), std::max_element(scores.begin(), scores.end()));
+            const std::string &semanticLabel = labels[bestIdx];
+
+            // Skip diffuse and Michel hits, for now
+            if (semanticLabel == "diffuse" || semanticLabel == "michel")
+                continue;
+
+            labelCounts[semanticLabel] += 1;
+            totalConsidered += 1;
+        }
+    }
+
+    if (totalConsidered == 0)
+        return 0.f;
+
+    const unsigned int maxCount = std::max_element(
+        labelCounts.begin(), labelCounts.end(),
+        [](const auto &a, const auto &b) { return a.second < b.second; })->second;
+    const float fraction = static_cast<float>(maxCount) / static_cast<float>(totalConsidered);
+    
+    // Apply penalty if the region is homogeneous in semantic labels
+    if (fraction >= m_maxSemanticLabelRatio)
+        penaltyFactor = m_semanticPenaltyFactor;
+
+    return penaltyFactor;
+}
+
 
 //------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -182,6 +289,18 @@ StatusCode MvaVertexSelectionAlgorithm<T>::ReadSettings(const TiXmlHandle xmlHan
     PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle, "RegionMvaName", m_regionMvaName));
 
     PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle, "VertexMvaName", m_vertexMvaName));
+
+    PANDORA_RETURN_RESULT_IF_AND_IF(pandora::STATUS_CODE_SUCCESS, pandora::STATUS_CODE_NOT_FOUND, !=,
+        XmlHelper::ReadValue(xmlHandle, "UseSemanticPenalty", m_useSemanticPenalty));
+
+    PANDORA_RETURN_RESULT_IF_AND_IF(pandora::STATUS_CODE_SUCCESS, pandora::STATUS_CODE_NOT_FOUND, !=,
+        XmlHelper::ReadValue(xmlHandle, "MaxSemanticLabelRatio", m_maxSemanticLabelRatio));
+
+    PANDORA_RETURN_RESULT_IF_AND_IF(pandora::STATUS_CODE_SUCCESS, pandora::STATUS_CODE_NOT_FOUND, !=,
+        XmlHelper::ReadValue(xmlHandle, "SemanticPenaltyFactor", m_semanticPenaltyFactor));
+
+    PANDORA_RETURN_RESULT_IF_AND_IF(pandora::STATUS_CODE_SUCCESS, pandora::STATUS_CODE_NOT_FOUND, !=,
+        XmlHelper::ReadValue(xmlHandle, "MaxHitSearchRadius", m_maxHitSearchRadius));
 
     // ATTN : Need access to base class member variables at this point, so call read settings prior to end of this function
     PANDORA_RETURN_RESULT_IF(STATUS_CODE_SUCCESS, !=, TrainedVertexSelectionAlgorithm::ReadSettings(xmlHandle));
