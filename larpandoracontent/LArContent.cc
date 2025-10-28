@@ -208,6 +208,7 @@
 #include "larpandoracontent/LArTwoDReco/LArClusterSplitting/CrossedTrackSplittingAlgorithm.h"
 #include "larpandoracontent/LArTwoDReco/LArClusterSplitting/DeltaRaySplittingAlgorithm.h"
 #include "larpandoracontent/LArTwoDReco/LArClusterSplitting/KinkSplittingAlgorithm.h"
+#include "larpandoracontent/LArTwoDReco/LArClusterSplitting/SemanticSplittingAlgorithm.h"
 #include "larpandoracontent/LArTwoDReco/LArClusterSplitting/LayerSplittingAlgorithm.h"
 #include "larpandoracontent/LArTwoDReco/LArClusterSplitting/OvershootSplittingAlgorithm.h"
 #include "larpandoracontent/LArTwoDReco/LArClusterSplitting/TrackConsolidationAlgorithm.h"
@@ -332,6 +333,7 @@
     d("LArCrossedTrackSplitting",               CrossedTrackSplittingAlgorithm)                                                 \
     d("LArDeltaRaySplitting",                   DeltaRaySplittingAlgorithm)                                                     \
     d("LArKinkSplitting",                       KinkSplittingAlgorithm)                                                         \
+    d("LArSemanticSplitting",                   SemanticSplittingAlgorithm)                                                     \
     d("LArLayerSplitting",                      LayerSplittingAlgorithm)                                                        \
     d("LArOvershootSplitting",                  OvershootSplittingAlgorithm)                                                    \
     d("LArTrackConsolidation",                  TrackConsolidationAlgorithm)                                                    \
