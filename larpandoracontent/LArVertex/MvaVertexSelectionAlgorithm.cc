@@ -38,7 +38,7 @@ template <typename T>
 MvaVertexSelectionAlgorithm<T>::MvaVertexSelectionAlgorithm() :
     TrainedVertexSelectionAlgorithm(),
     m_filePathEnvironmentVariable("FW_SEARCH_PATH"),
-    m_useSemanticPenalty(true),
+    m_useSemanticPenalty(false),
     m_maxSemanticLabelRatio(0.95f),
     m_semanticPenaltyFactor(0.2f),
     m_maxHitSearchRadius(4.f)
