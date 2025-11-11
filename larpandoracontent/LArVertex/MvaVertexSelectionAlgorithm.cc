@@ -39,9 +39,10 @@ MvaVertexSelectionAlgorithm<T>::MvaVertexSelectionAlgorithm() :
     TrainedVertexSelectionAlgorithm(),
     m_filePathEnvironmentVariable("FW_SEARCH_PATH"),
     m_useSemanticPenalty(false),
+    m_semanticConfidenceCut(3.),
     m_maxSemanticLabelRatio(0.95f),
     m_semanticPenaltyFactor(0.2f),
-    m_maxHitSearchRadius(4.f)
+    m_maxHitSearchRadius(5.f)
 {
 }
 
@@ -244,14 +245,14 @@ float MvaVertexSelectionAlgorithm<T>::ComputeSemanticPenalty(const pandora::Cart
             std::vector<float> sortedScores = scores;
             std::sort(sortedScores.begin(), sortedScores.end(), std::greater<float>());
             const float confidence = sortedScores[0] / (sortedScores[1] + std::numeric_limits<float>::epsilon());
-            if (confidence < 1.5f)
+            if (confidence < m_semanticConfidenceCut)
                 continue;
 
             // Get the best label for this hit
             const size_t bestIdx = std::distance(scores.begin(), std::max_element(scores.begin(), scores.end()));
             const std::string &semanticLabel = labels[bestIdx];
 
-            // Skip diffuse and Michel hits, for now
+            // Skip diffuse and Michel hits
             if (semanticLabel == "diffuse" || semanticLabel == "michel")
                 continue;
 
@@ -275,7 +276,6 @@ float MvaVertexSelectionAlgorithm<T>::ComputeSemanticPenalty(const pandora::Cart
     return penaltyFactor;
 }
 
-
 //------------------------------------------------------------------------------------------------------------------------------------------
 
 template <typename T>
@@ -292,6 +292,9 @@ StatusCode MvaVertexSelectionAlgorithm<T>::ReadSettings(const TiXmlHandle xmlHan
 
     PANDORA_RETURN_RESULT_IF_AND_IF(pandora::STATUS_CODE_SUCCESS, pandora::STATUS_CODE_NOT_FOUND, !=,
         XmlHelper::ReadValue(xmlHandle, "UseSemanticPenalty", m_useSemanticPenalty));
+
+    PANDORA_RETURN_RESULT_IF_AND_IF(pandora::STATUS_CODE_SUCCESS, pandora::STATUS_CODE_NOT_FOUND, !=,
+        XmlHelper::ReadValue(xmlHandle, "SemanticConfidenceCut", m_semanticConfidenceCut));
 
     PANDORA_RETURN_RESULT_IF_AND_IF(pandora::STATUS_CODE_SUCCESS, pandora::STATUS_CODE_NOT_FOUND, !=,
         XmlHelper::ReadValue(xmlHandle, "MaxSemanticLabelRatio", m_maxSemanticLabelRatio));

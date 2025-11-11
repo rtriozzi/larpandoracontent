@@ -92,6 +92,7 @@ private:
     T m_mvaVertex;                             ///< The vertex mva
 
     bool m_useSemanticPenalty;                 ///< Whether to apply a penalty based on semantic label homogeneity
+    float m_semanticConfidenceCut;             ///< Cut on the semantic confidence
     float m_maxSemanticLabelRatio;             ///< Fraction threshold for homogeneity 
     float m_semanticPenaltyFactor;             ///< Fixed penalty factor
     float m_maxHitSearchRadius;                ///< Search radius for hits around vertex [cm]
