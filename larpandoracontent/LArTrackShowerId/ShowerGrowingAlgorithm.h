@@ -155,6 +155,8 @@ private:
     float m_maxVertexLongitudinalDistance; ///< Vertex association check: max longitudinal distance cut
     float m_maxVertexTransverseDistance;   ///< Vertex association check: max transverse distance cut
     float m_vertexAngularAllowance;        ///< Vertex association check: pointing angular allowance in degrees
+
+    bool m_useSemanticInformation;
 };
 
 } // namespace lar_content

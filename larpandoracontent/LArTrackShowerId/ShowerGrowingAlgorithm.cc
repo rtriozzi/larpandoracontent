@@ -31,7 +31,8 @@ ShowerGrowingAlgorithm::ShowerGrowingAlgorithm() :
     m_minVertexLongitudinalDistance(-2.5f),
     m_maxVertexLongitudinalDistance(20.f),
     m_maxVertexTransverseDistance(1.5f),
-    m_vertexAngularAllowance(3.f)
+    m_vertexAngularAllowance(3.f),
+    m_useSemanticInformation(false)
 {
 }
 
@@ -280,6 +281,17 @@ ShowerGrowingAlgorithm::AssociationType ShowerGrowingAlgorithm::AreClustersAssoc
     const Vertex *const pVertex(
         ((pVertexList->size() == 1) && (VERTEX_3D == (*(pVertexList->begin()))->GetVertexType())) ? *(pVertexList->begin()) : nullptr);
 
+    // Cluster semantic label check
+    if (m_useSemanticInformation)
+    {
+        std::string labelSeed, labelCand;
+        bool hasSeedLabel = LArClusterHelper::GetPredictedSemanticLabel(pClusterSeed, labelSeed);
+        bool hasCandLabel = LArClusterHelper::GetPredictedSemanticLabel(pCluster, labelCand);
+
+        if (hasSeedLabel && hasCandLabel && (labelSeed != "shower" || labelCand != "shower"))
+                return NONE;
+    }
+
     // Direction of seed cluster (cache for efficiency)
     ClusterDirectionMap::const_iterator seedIter = m_clusterDirectionMap.find(pClusterSeed);
 
@@ -455,6 +467,9 @@ StatusCode ShowerGrowingAlgorithm::ReadSettings(const TiXmlHandle xmlHandle)
 
     PANDORA_RETURN_RESULT_IF_AND_IF(
         STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle, "VertexAngularAllowance", m_vertexAngularAllowance));
+
+    PANDORA_RETURN_RESULT_IF_AND_IF(
+        STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle, "UseSemanticInformation", m_useSemanticInformation));
 
     return BranchGrowingAlgorithm::ReadSettings(xmlHandle);
 }

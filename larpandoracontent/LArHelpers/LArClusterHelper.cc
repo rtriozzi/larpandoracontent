@@ -790,4 +790,50 @@ bool LArClusterHelper::SortCoordinatesByPosition(const CartesianVector &lhs, con
     return (deltaPosition.GetY() > std::numeric_limits<float>::epsilon());
 }
 
+//------------------------------------------------------------------------------------------------------------------------------------------
+
+bool LArClusterHelper::GetPredictedSemanticLabel(const pandora::Cluster *const pCluster, std::string &semanticLabel)
+{
+    const OrderedCaloHitList &orderedCaloHitList(pCluster->GetOrderedCaloHitList());
+    std::map<std::string, unsigned int> labelCounts;
+
+    for (OrderedCaloHitList::const_iterator ochIter = orderedCaloHitList.begin(), ochIterEnd = orderedCaloHitList.end(); ochIter != ochIterEnd; ++ochIter)
+    {
+        for (CaloHitList::const_iterator hIter = ochIter->second->begin(), hIterEnd = ochIter->second->end(); hIter != hIterEnd; ++hIter)
+        {
+            const CaloHit *const pCaloHit(*hIter);
+            if (!pCaloHit) 
+                continue;
+
+            const LArCaloHit *const pLArCaloHit(dynamic_cast<const LArCaloHit *>(pCaloHit));
+            if (!pLArCaloHit) 
+                continue;
+
+            const auto &allScores = pLArCaloHit->GetHitScores();
+            const auto &allLabels = pLArCaloHit->GetHitScoreLabels();
+
+            if (allScores.empty() || allLabels.empty())
+                continue;
+
+            const std::vector<float> scores(allScores.begin() + 1, allScores.end());
+            const std::vector<std::string> labels(allLabels.begin() + 1, allLabels.end());
+
+            const size_t bestIdx = std::distance(scores.begin(), std::max_element(scores.begin(), scores.end()));
+            const std::string &bestLabel = labels[bestIdx];
+
+            labelCounts[bestLabel] += 1;
+        }
+    }
+
+    if (labelCounts.empty())
+        return false;
+
+    const auto bestIt = std::max_element(
+        labelCounts.begin(), labelCounts.end(),
+        [](const auto &a, const auto &b) { return a.second < b.second; });
+
+    semanticLabel = bestIt->first;
+    return true;
+}
+
 } // namespace lar_content

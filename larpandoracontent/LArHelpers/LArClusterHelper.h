@@ -392,6 +392,17 @@ public:
      *  @param  rhs second point
      */
     static bool SortCoordinatesByPosition(const pandora::CartesianVector &lhs, const pandora::CartesianVector &rhs);
+
+    /**
+     *  @brief  Get the predicted label predicted for a cluster, based
+     *          hit predictions.
+     *
+     *  @param  pCluster address of the cluster
+     *  @param  semanticLabel to receive the predicted label string
+     *
+     *  @return true if there are valid predictions, false otherwise
+     */
+    static bool GetPredictedSemanticLabel(const pandora::Cluster *const pCluster, std::string &semanticLabel); 
 };
 
 } // namespace lar_content
